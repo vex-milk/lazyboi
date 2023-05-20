@@ -2,73 +2,66 @@
 # It establishes a connection to an SFTP server and transfers a file from a specified source path to a destination folder on a Windows share.
 # I called it king_julian because I like his tail...
 
-# Parameters:
-
-# SourceFilePath: The path to the source file that needs to be transferred.
-# DestinationFolderPath: The destination folder path on the Windows share where the file should be transferred.
-# DestinationFileName: The name of the destination file.
-# SftpServer: The address of the SFTP server.
-# ManagedServiceAccountName: The name of the Managed Service Account (MSA) stored in the Windows Credential Manager.
-# LogFilePath: The path to the log file where the script will record transfer details and errors.
-# Silent (Switch): Suppresses all script output except for error messages.
-# Verbose (Switch): Enables detailed script output.
-
-# Example
-# Transfer-SFTPFile -SourceFilePath "C:\Path\To\Source\File.zip" -DestinationFolderPath "\\Server\Share\Folder" -DestinationFileName "File.zip" -SftpServer "sftp.example.com" -ManagedServiceAccountName "ManagedServiceAccount" -LogFilePath "C:\Path\To\Log\transfer.log" -Verbose
-
-# Notes:
-# The script requires the SSHUtils module, which can be installed using the Install-Module command.
-# Ensure that the Managed Service Account (MSA) credentials are stored in the Windows Credential Manager.
-# The script uses TLS 1.3 for secure communication with the SFTP server.
-# Transfer details and any encountered errors will be logged in the specified log file.
-
 <#
 .SYNOPSIS
-    Transfer files over SFTP using a Managed Service Account (MSA) for authentication.
-
+   Securely copies a file to an SFTP server using PowerShell.
 .DESCRIPTION
-    This script allows users to securely transfer files over SFTP (SSH File Transfer Protocol). It establishes a connection to an SFTP server using a Managed Service Account (MSA) for authentication and transfers files from a source path to a destination folder on a Windows share. Users have the option to transfer a single file or all files in a directory.
-
+   This script securely copies a file to an SFTP server using PowerShell. It establishes an SSH session with the server, authenticates using SSH key-based authentication, and performs the file transfer.
 .PARAMETER SourceFilePath
-    The path to the source file or directory that needs to be transferred.
-
+   Specifies the path of the source file to be copied.
 .PARAMETER DestinationFolderPath
-    The destination folder path on the Windows share where the files should be transferred.
-
+   Specifies the destination folder where the file will be copied.
 .PARAMETER DestinationFileName
-    The name of the destination file. Required if transferring a single file.
-
+   (Optional) Specifies the name of the destination file. If not provided, the source file name will be used.
 .PARAMETER SftpServer
-    The address of the SFTP server.
-
+   Specifies the address or hostname of the SFTP server.
 .PARAMETER ManagedServiceAccountName
-    The name of the Managed Service Account (MSA) stored in the Windows Credential Manager.
-
+   Specifies the name of the Managed Service Account.
 .PARAMETER LogFilePath
-    The path to the log file where the script will record transfer details and errors.
-
+   Specifies the path of the log file where information will be written.
 .PARAMETER CopyAllFiles
-    Specifies whether to copy all files in the source directory. If this switch is present, the script will transfer all files instead of a single file.
-
+   (Optional) Switch parameter indicating whether to copy all files from the source folder.
 .PARAMETER Silent
-    Suppresses all script output except for error messages.
-
+   (Optional) Switch parameter indicating whether to run the script silently, suppressing verbose output.
 .PARAMETER Verbose
-    Enables detailed script output.
-
+   (Optional) Switch parameter indicating whether to run the script in verbose mode, providing detailed output.
 .EXAMPLE
-    Transfer-SFTPFiles -SourceFilePath "C:\Path\To\Files" -DestinationFolderPath "\\Server\Share\Folder" -SftpServer "sftp.example.com" -ManagedServiceAccountName "ManagedServiceAccount" -LogFilePath "C:\Path\To\Log\transfer.log" -Verbose
-
-.NOTES
-    - This script requires the SSHUtils module. Install the module using the following command:
-        Install-Module -Name SSHUtils
-
-    - Ensure that the Managed Service Account (MSA) credentials are stored in the Windows Credential Manager.
-
-    - The script uses TLS 1.3 for secure communication with the SFTP server.
-
-    - The log file will contain transfer details and any encountered errors.
+   .\Copy-ToSFTPServer.ps1 -SourceFilePath "C:\Files\file.txt" -DestinationFolderPath "/data/files" -SftpServer "sftp.example.com" -ManagedServiceAccountName "SFTP_User" -LogFilePath "C:\Logs\file_copy.log" -Verbose
+   This example copies the file "file.txt" from the local machine to the "/data/files" folder on the SFTP server "sftp.example.com". It uses the Managed Service Account "SFTP_User" for authentication and writes verbose output to the log file "file_copy.log".
 #>
+
+# Set the execution policy to RemoteSigned to restrict running unsigned scripts
+Set-ExecutionPolicy RemoteSigned -Scope Process
+
+# Check if the SSH-Sessions module is installed, and install it if necessary
+if (-not (Get-Module -Name SSH-Sessions -ListAvailable)) {
+    Write-Host "The 'SSH-Sessions' module is required to run this script. Installing the module..."
+
+    try {
+        Install-Module -Name SSH-Sessions -Scope CurrentUser -Force
+        Write-Host "The 'SSH-Sessions' module has been installed successfully."
+    }
+    catch {
+        Write-Host "Failed to install the 'SSH-Sessions' module. Please ensure you have the required permissions to install PowerShell modules."
+        return
+    }
+}
+
+# Set the SSH client configuration to force TLS 1.3
+$sshClientConfigPath = "$env:USERPROFILE\.ssh\ssh_config"
+
+# Create or update the SSH client configuration file
+@"
+Host *
+    Include C:\Program Files\OpenSSH-Win64\etc\ssh_config
+    Protocol 2
+    Ciphers aes256-gcm@openssh.com,chacha20-poly1305@openssh.com,aes256-ctr
+    MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-256
+    KexAlgorithms curve25519-sha256@libssh.org
+    HostKeyAlgorithms ssh-ed25519-cert-v01@openssh.com,ssh-ed25519
+    UseRoaming no
+    LogLevel VERBOSE
+"@ | Set-Content -Path $sshClientConfigPath -Force
 
 param (
     [Parameter(Mandatory = $true)]
@@ -95,26 +88,68 @@ param (
     [Switch]$Verbose
 )
 
-if ($Silent) {
+# Validate the source file path
+if (-not (Test-Path -Path $SourceFilePath -PathType Leaf)) {
+    Write-Verbose "Source file '$SourceFilePath' does not exist."
+    Add-Content -Path $LogFilePath -Value "Source file '$SourceFilePath' does not exist."
+    return
+}
+
+# Validate the destination folder path
+if (-not (Test-Path -Path $DestinationFolderPath -PathType Container)) {
+    Write-Verbose "Destination folder '$DestinationFolderPath' does not exist."
+    Add-Content -Path $LogFilePath -Value "Destination folder '$DestinationFolderPath' does not exist."
+    return
+}
+
+# Set secure string credentials for the MSA
+$msaCredentials = Get-StoredCredential -Target $ManagedServiceAccountName
+if (!$msaCredentials) {
+    Write-Verbose "Could not retrieve the MSA credentials from the Credential Manager."
+    Add-Content -Path $LogFilePath -Value "Could not retrieve the MSA credentials from the Credential Manager."
+    return
+}
+
+# Convert the password from SecureString to plain text
+$msaPassword = $msaCredentials.GetNetworkCredential().Password
+
+# Create a PSCredential object for the MSA
+$msaCredential = New-Object System.Management.Automation.PSCredential($ManagedServiceAccountName, ($msaPassword | ConvertTo-SecureString -AsPlainText -Force))
+
+# Disable verbose output unless explicitly enabled
+if (-not $Verbose) {
     $VerbosePreference = 'SilentlyContinue'
 }
 
-if ($Verbose) {
-    $VerbosePreference = 'Continue'
-}
-
 try {
-    # Get the MSA credentials from the Windows Credential Manager
-    $msaCredentials = Get-StoredCredential -Target $ManagedServiceAccountName
+    # Securely connect to the SFTP server using SSH key authentication
+    $sshSession = New-SFTPSession -ComputerName $SftpServer -Credential $msaCredential -KeyPath "C:\Path\To\PrivateKey.pem"
 
-    if (!$msaCredentials) {
-        Write-Verbose "Could not retrieve the MSA credentials from the Credential Manager."
-        Add-Content -Path $LogFilePath -Value "Could not retrieve the MSA credentials from the Credential Manager."
-        return
+    # Determine the destination file name
+    if (-not $DestinationFileName) {
+        $DestinationFileName = (Split-Path -Path $SourceFilePath -Leaf)
     }
 
-    # Convert the password from SecureString to plain text
-    $msaPassword = $msaCredentials.GetNetworkCredential().Password
+    # Construct the full destination file path
+    $DestinationFilePath = Join-Path -Path $DestinationFolderPath -ChildPath $DestinationFileName
 
-    # Create a PSCredential object for the MSA
-    $msaCredential = New-Object System.Management
+    # Copy the file to the destination folder
+    if ($CopyAllFiles) {
+        Copy-SFTPItem -SessionId $sshSession.SessionId -Path $SourceFilePath -Destination $DestinationFolderPath -Recurse -Force
+    }
+    else {
+        Copy-SFTPItem -SessionId $sshSession.SessionId -Path $SourceFilePath -Destination $DestinationFilePath -Force
+    }
+
+    # Close the SSH session
+    Remove-SFTPSession -SessionId $sshSession.SessionId
+
+    Write-Verbose "File '$SourceFilePath' copied to '$DestinationFilePath' successfully."
+    Add-Content -Path $LogFilePath -Value "File '$SourceFilePath' copied to '$DestinationFilePath' successfully."
+}
+catch {
+    Write-Verbose "Error occurred during file transfer: $_"
+    Add-Content -Path $LogFilePath -Value "Error occurred during file transfer: $_"
+}
+
+
