@@ -1,5 +1,6 @@
 # This script allows you to securely transfer a file over SFTP (SSH File Transfer Protocol) using a Managed Service Account (MSA) for authentication.
 # It establishes a connection to an SFTP server and transfers a file from a specified source path to a destination folder on a Windows share.
+# I called it king_julian because I like his tail...
 
 # Parameters:
 
@@ -23,20 +24,19 @@
 
 <#
 .SYNOPSIS
-    Transfer a file over SFTP using a Managed Service Account (MSA) for authentication.
+    Transfer files over SFTP using a Managed Service Account (MSA) for authentication.
 
 .DESCRIPTION
-    This script establishes an SSH session to the SFTP server using the provided Managed Service Account (MSA) credentials
-    and transfers a file from the source path to the specified destination folder.
+    This script allows users to securely transfer files over SFTP (SSH File Transfer Protocol). It establishes a connection to an SFTP server using a Managed Service Account (MSA) for authentication and transfers files from a source path to a destination folder on a Windows share. Users have the option to transfer a single file or all files in a directory.
 
 .PARAMETER SourceFilePath
-    The path to the source file that needs to be transferred.
+    The path to the source file or directory that needs to be transferred.
 
 .PARAMETER DestinationFolderPath
-    The destination folder path on the Windows share where the file should be transferred.
+    The destination folder path on the Windows share where the files should be transferred.
 
 .PARAMETER DestinationFileName
-    The name of the destination file.
+    The name of the destination file. Required if transferring a single file.
 
 .PARAMETER SftpServer
     The address of the SFTP server.
@@ -47,6 +47,9 @@
 .PARAMETER LogFilePath
     The path to the log file where the script will record transfer details and errors.
 
+.PARAMETER CopyAllFiles
+    Specifies whether to copy all files in the source directory. If this switch is present, the script will transfer all files instead of a single file.
+
 .PARAMETER Silent
     Suppresses all script output except for error messages.
 
@@ -54,7 +57,7 @@
     Enables detailed script output.
 
 .EXAMPLE
-    Transfer-SFTPFile -SourceFilePath "C:\Path\To\Source\File.zip" -DestinationFolderPath "\\Server\Share\Folder" -DestinationFileName "File.zip" -SftpServer "sftp.example.com" -ManagedServiceAccountName "ManagedServiceAccount" -LogFilePath "C:\Path\To\Log\transfer.log" -Verbose
+    Transfer-SFTPFiles -SourceFilePath "C:\Path\To\Files" -DestinationFolderPath "\\Server\Share\Folder" -SftpServer "sftp.example.com" -ManagedServiceAccountName "ManagedServiceAccount" -LogFilePath "C:\Path\To\Log\transfer.log" -Verbose
 
 .NOTES
     - This script requires the SSHUtils module. Install the module using the following command:
@@ -74,7 +77,6 @@ param (
     [Parameter(Mandatory = $true)]
     [String]$DestinationFolderPath,
 
-    [Parameter(Mandatory = $true)]
     [String]$DestinationFileName,
 
     [Parameter(Mandatory = $true)]
@@ -85,6 +87,8 @@ param (
 
     [Parameter(Mandatory = $true)]
     [String]$LogFilePath,
+
+    [Switch]$CopyAllFiles,
 
     [Switch]$Silent,
 
@@ -113,7 +117,4 @@ try {
     $msaPassword = $msaCredentials.GetNetworkCredential().Password
 
     # Create a PSCredential object for the MSA
-    $msaCredential = New-Object System.Management.Automation.PSCredential ($ManagedServiceAccountName, ($msaPassword | ConvertTo-SecureString -AsPlainText -Force))
-
-    # Create SSH session options with TLS 1.3 enabled and strict host key checking
-    $sessionOptions = New-SshSessionOption -Protocol SSH2 -Ciphers aes256-ctr,aes192-ctr,aes128-ctr -
+    $msaCredential = New-Object System.Management
