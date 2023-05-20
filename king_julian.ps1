@@ -19,15 +19,21 @@
    Specifies the name of the Managed Service Account.
 .PARAMETER LogFilePath
    Specifies the path of the log file where information will be written.
+.PARAMETER PrivateKeyPath
+   Specifies the path to the private key file for SSH key-based authentication.
 .PARAMETER CopyAllFiles
    (Optional) Switch parameter indicating whether to copy all files from the source folder.
 .PARAMETER Silent
    (Optional) Switch parameter indicating whether to run the script silently, suppressing verbose output.
 .PARAMETER Verbose
    (Optional) Switch parameter indicating whether to run the script in verbose mode, providing detailed output.
+.PARAMETER TranscriptPath
+   (Optional) Specifies the path for the PowerShell transcript logs.
+.PARAMETER UseTLS12Fallback
+   (Optional) Switch parameter indicating whether to fall back to TLS 1.2 if TLS 1.3 connection fails.
 .EXAMPLE
-   .\Copy-ToSFTPServer.ps1 -SourceFilePath "C:\Files\file.txt" -DestinationFolderPath "/data/files" -SftpServer "sftp.example.com" -ManagedServiceAccountName "SFTP_User" -LogFilePath "C:\Logs\file_copy.log" -Verbose
-   This example copies the file "file.txt" from the local machine to the "/data/files" folder on the SFTP server "sftp.example.com". It uses the Managed Service Account "SFTP_User" for authentication and writes verbose output to the log file "file_copy.log".
+   .\Copy-ToSFTPServer.ps1 -SourceFilePath "C:\Files\file.txt" -DestinationFolderPath "/data/files" -SftpServer "sftp.example.com" -ManagedServiceAccountName "SFTP_User" -LogFilePath "C:\Logs\file_copy.log" -PrivateKeyPath "C:\Path\To\PrivateKey.pem" -Verbose
+   This example copies the file "file.txt" from the local machine to the "/data/files" folder on the SFTP server "sftp.example.com". It uses the Managed Service Account "SFTP_User" for authentication, the private key located at "C:\Path\To\PrivateKey.pem", and writes verbose output to the log file "file_copy.log".
 #>
 
 # Set the execution policy to RemoteSigned to restrict running unsigned scripts
@@ -81,24 +87,31 @@ param (
     [Parameter(Mandatory = $true)]
     [String]$LogFilePath,
 
+    [Parameter(Mandatory = $true)]
+    [String]$PrivateKeyPath,
+
     [Switch]$CopyAllFiles,
 
     [Switch]$Silent,
 
-    [Switch]$Verbose
+    [Switch]$Verbose,
+
+    [String]$TranscriptPath,
+
+    [Switch]$UseTLS12Fallback
 )
 
 # Validate the source file path
 if (-not (Test-Path -Path $SourceFilePath -PathType Leaf)) {
     Write-Verbose "Source file '$SourceFilePath' does not exist."
-    Add-Content -Path $LogFilePath -Value "Source file '$SourceFilePath' does not exist."
+    Add-Content -Path $LogFilePath -Value "$(Get-Date) - Source file '$SourceFilePath' does not exist."
     return
 }
 
 # Validate the destination folder path
 if (-not (Test-Path -Path $DestinationFolderPath -PathType Container)) {
     Write-Verbose "Destination folder '$DestinationFolderPath' does not exist."
-    Add-Content -Path $LogFilePath -Value "Destination folder '$DestinationFolderPath' does not exist."
+    Add-Content -Path $LogFilePath -Value "$(Get-Date) - Destination folder '$DestinationFolderPath' does not exist."
     return
 }
 
@@ -106,7 +119,7 @@ if (-not (Test-Path -Path $DestinationFolderPath -PathType Container)) {
 $msaCredentials = Get-StoredCredential -Target $ManagedServiceAccountName
 if (!$msaCredentials) {
     Write-Verbose "Could not retrieve the MSA credentials from the Credential Manager."
-    Add-Content -Path $LogFilePath -Value "Could not retrieve the MSA credentials from the Credential Manager."
+    Add-Content -Path $LogFilePath -Value "$(Get-Date) - Could not retrieve the MSA credentials from the Credential Manager."
     return
 }
 
@@ -122,8 +135,21 @@ if (-not $Verbose) {
 }
 
 try {
-    # Securely connect to the SFTP server using SSH key authentication
-    $sshSession = New-SFTPSession -ComputerName $SftpServer -Credential $msaCredential -KeyPath "C:\Path\To\PrivateKey.pem"
+    # Attempt to connect using TLS 1.3
+    $sshSession = New-SFTPSession -ComputerName $SftpServer -Credential $msaCredential -KeyPath $PrivateKeyPath -UseTLS13
+
+    # If TLS 1.3 connection fails and UseTLS12Fallback is enabled, attempt to connect using TLS 1.2
+    if (-not $sshSession -and $UseTLS12Fallback) {
+        Write-Verbose "Failed to connect using TLS 1.3. Fallback to TLS 1.2."
+
+        $sshSession = New-SFTPSession -ComputerName $SftpServer -Credential $msaCredential -KeyPath $PrivateKeyPath -UseTLS12
+    }
+
+    if (-not $sshSession) {
+        Write-Verbose "Failed to establish an SSH session."
+        Add-Content -Path $LogFilePath -Value "$(Get-Date) - Failed to establish an SSH session."
+        return
+    }
 
     # Determine the destination file name
     if (-not $DestinationFileName) {
@@ -145,11 +171,16 @@ try {
     Remove-SFTPSession -SessionId $sshSession.SessionId
 
     Write-Verbose "File '$SourceFilePath' copied to '$DestinationFilePath' successfully."
-    Add-Content -Path $LogFilePath -Value "File '$SourceFilePath' copied to '$DestinationFilePath' successfully."
+    Add-Content -Path $LogFilePath -Value "$(Get-Date) - File '$SourceFilePath' copied to '$DestinationFilePath' successfully."
 }
 catch {
     Write-Verbose "Error occurred during file transfer: $_"
-    Add-Content -Path $LogFilePath -Value "Error occurred during file transfer: $_"
+    Add-Content -Path $LogFilePath -Value "$(Get-Date) - Error occurred during file transfer: $_"
 }
+
+# Stop PowerShell transcript logging
+Stop-Transcript
+
+
 
 
