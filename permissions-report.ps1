@@ -1,4 +1,7 @@
-$FolderPath = Get-ChildItem -Directory -Path "C:\temp" -Recurse -Force
+# Enable long path support for the current PowerShell session
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
+
+$FolderPath = Get-ChildItem -Directory -Path "\\Server\Share" -Recurse -Force
 $Output = @()
 
 # Calculate the total number of directories and access rules
@@ -51,7 +54,7 @@ ForEach ($Folder in $FolderPath) {
 Write-Progress -Activity "Analyzing folder permissions" -Completed
 
 # Prompt the user to choose the export format
-$choice = Read-Host "Choose the export format (CSV, XML, or JSON)"
+$choice = Read-Host "Choose the export format (CSV, XML, JSON, or HTML)"
 switch ($choice.ToUpper()) {
     'CSV' {
         $csvFilePath = Join-Path -Path $env:TEMP -ChildPath "FolderPermissionsReport.csv"
@@ -67,6 +70,12 @@ switch ($choice.ToUpper()) {
         $jsonFilePath = Join-Path -Path $env:TEMP -ChildPath "FolderPermissionsReport.json"
         $Output | ConvertTo-Json | Out-File -FilePath $jsonFilePath
         Write-Host "The report has been exported as JSON to: $jsonFilePath"
+    }
+    'HTML' {
+        $htmlTable = $Output | ConvertTo-Html -Property 'Folder Name', 'Group/User', 'Permissions', 'Inherited' -Fragment
+        $htmlFilePath = Join-Path -Path $env:TEMP -ChildPath "FolderPermissionsReport.html"
+        $htmlTable | Out-File -FilePath $htmlFilePath
+        Write-Host "The report has been exported as HTML to: $htmlFilePath"
     }
     default {
         Write-Host "Invalid choice. The report will be displayed in Out-GridView."
