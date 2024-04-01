@@ -1,0 +1,185 @@
+Below is the modified script incorporating the suggested improvements except for testing:
+
+```powershell
+<#
+.SYNOPSIS
+Generates a Certificate Signing Request (CSR) for a Windows server and emails it to an admin account.
+
+.DESCRIPTION
+This script generates a CSR for a Windows server, emails it to the specified admin email address using the provided SMTP server details, and performs various enhancements such as input validation, error handling, logging, and more.
+
+.PARAMETER ServerName
+The name of the server for which the CSR is being generated.
+
+.PARAMETER CommonName
+The common name (CN) for the server certificate.
+
+.PARAMETER Organization
+The organization (O) name for the server certificate.
+
+.PARAMETER Department
+The department (OU) name for the server certificate.
+
+.PARAMETER Country
+The country code (C) for the server certificate.
+
+.PARAMETER State
+The state or province (S) name for the server certificate.
+
+.PARAMETER City
+The city or locality (L) name for the server certificate.
+
+.PARAMETER AdminEmail
+The email address of the admin account to which the CSR will be emailed.
+
+.PARAMETER SMTPServer
+The SMTP server address for sending emails.
+
+.PARAMETER SMTPPort
+The SMTP server port (default is 587 for TLS).
+
+.PARAMETER SMTPUsername
+The username for authenticating with the SMTP server.
+
+.PARAMETER SMTPPassword
+The password for authenticating with the SMTP server.
+
+.PARAMETER CustomEmailBody
+Custom email body for the CSR email. Default is "Please find the attached CSR file for $ServerName."
+
+.EXAMPLE
+GenerateCSRAndEmail.ps1 -ServerName "example.com" -CommonName "example.com" -Organization "Example Inc" -Department "IT" -Country "US" -State "CA" -City "Los Angeles" -AdminEmail "admin@example.com" -SMTPServer "smtp.example.com" -SMTPPort 587 -SMTPUsername "smtpuser" -SMTPPassword "password"
+
+.NOTES
+Author: OpenAI ChatGPT
+Date: April 2024
+#>
+
+param (
+    [Parameter(Mandatory = $true)]
+    [string]$ServerName,
+
+    [Parameter(Mandatory = $true)]
+    [string]$CommonName,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Organization,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Department,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Country,
+
+    [Parameter(Mandatory = $true)]
+    [string]$State,
+
+    [Parameter(Mandatory = $true)]
+    [string]$City,
+
+    [Parameter(Mandatory = $true)]
+    [string]$AdminEmail,
+
+    [Parameter(Mandatory = $true)]
+    [string]$SMTPServer,
+
+    [Parameter(Mandatory = $true)]
+    [int]$SMTPPort,
+
+    [Parameter(Mandatory = $true)]
+    [string]$SMTPUsername,
+
+    [Parameter(Mandatory = $true)]
+    [string]$SMTPPassword,
+
+    [string]$CustomEmailBody = "Please find the attached CSR file for $ServerName."
+)
+
+# Error handling
+$ErrorActionPreference = "Stop"
+
+try {
+    # Validate inputs
+    if (-not ($AdminEmail -match '^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')) {
+        throw "Invalid email address format. Please provide a valid email address for AdminEmail parameter."
+    }
+    if ([string]::IsNullOrWhiteSpace($ServerName)) {
+        throw "ServerName parameter cannot be empty."
+    }
+    if ([string]::IsNullOrWhiteSpace($CommonName)) {
+        throw "CommonName parameter cannot be empty."
+    }
+    if ([string]::IsNullOrWhiteSpace($Organization)) {
+        throw "Organization parameter cannot be empty."
+    }
+    if ([string]::IsNullOrWhiteSpace($Department)) {
+        throw "Department parameter cannot be empty."
+    }
+    if ([string]::IsNullOrWhiteSpace($Country)) {
+        throw "Country parameter cannot be empty."
+    }
+    if ([string]::IsNullOrWhiteSpace($State)) {
+        throw "State parameter cannot be empty."
+    }
+    if ([string]::IsNullOrWhiteSpace($City)) {
+        throw "City parameter cannot be empty."
+    }
+
+    # Generate a CSR
+    $csrParams = @{
+        DnsName = $ServerName
+        KeyLength = 2048
+        KeyExportPolicy = "Exportable"
+        CertStoreLocation = "Cert:\LocalMachine\My"
+        FriendlyName = "CSR for $ServerName"
+        Subject = "CN=$CommonName, O=$Organization, OU=$Department, C=$Country, S=$State, L=$City"
+    }
+    $csr = New-SelfSignedCertificate @csrParams
+    $csrPath = Join-Path -Path $env:TEMP -ChildPath "server.csr.pem"
+    $csrBytes = $csr.Export("Cer")
+    [System.IO.File]::WriteAllBytes($csrPath, $csrBytes)
+
+    # Email CSR information
+    $mailParams = @{
+        SmtpServer = $SMTPServer
+        Port = $SMTPPort
+        UseSsl = $true
+        Credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $SMTPUsername, (ConvertTo-SecureString -String $SMTPPassword -AsPlainText -Force)
+        From = $AdminEmail
+        To = $AdminEmail
+        Subject = "CSR for $ServerName"
+        Body = $CustomEmailBody
+        Attachments = $csrPath
+    }
+    Send-MailMessage @mailParams
+
+    # Clean up the CSR file
+    Remove-Item -Path $csrPath -ErrorAction SilentlyContinue
+
+    # Log success
+    Write-Host "CSR generated successfully and emailed to $AdminEmail." -ForegroundColor Green
+}
+catch {
+    # Log and display error message
+    $errorMessage = $_.Exception.Message
+    Write-Host "Error: $errorMessage" -ForegroundColor Red
+
+    # Log error to a file
+    $logFilePath = Join-Path -Path $env:TEMP -ChildPath "CSRGenerationError.log"
+    $errorLog = "Timestamp: $(Get-Date)`nError: $errorMessage`n"
+    $errorLog | Out-File -FilePath $logFilePath -Append
+
+    # Email error details to admin
+    $errorMailParams = @{
+        SmtpServer = $SMTPServer
+        Port = $SMTPPort
+        UseSsl = $true
+        Credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $SMTPUsername, (ConvertTo-SecureString -String $SMTPPassword -AsPlainText -Force)
+        From = $AdminEmail
+        To = $AdminEmail
+        Subject = "Error: CSR generation failed for $ServerName"
+        Body = "An error occurred while generating the CSR for $ServerName:`n$errorMessage`nPlease check the log file for more details: $logFilePath"
+    }
+    Send-MailMessage @errorMailParams
+}
+```
