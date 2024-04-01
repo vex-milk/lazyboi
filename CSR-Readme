@@ -1,0 +1,66 @@
+Certainly! Below is the documentation on how to use the provided PowerShell script:
+
+---
+
+**GenerateCSRAndEmail.ps1**
+
+**Description:**
+This script generates a Certificate Signing Request (CSR) for a Windows server and emails it to an admin account. It performs various enhancements such as input validation, error handling, logging, and more.
+
+**Parameters:**
+
+- **ServerName:** The name of the server for which the CSR is being generated.
+  
+- **CommonName:** The common name (CN) for the server certificate.
+  
+- **Organization:** The organization (O) name for the server certificate.
+  
+- **Department:** The department (OU) name for the server certificate.
+  
+- **Country:** The country code (C) for the server certificate.
+  
+- **State:** The state or province (S) name for the server certificate.
+  
+- **City:** The city or locality (L) name for the server certificate.
+  
+- **AdminEmail:** The email address of the admin account to which the CSR will be emailed.
+  
+- **SMTPServer:** The SMTP server address for sending emails.
+  
+- **SMTPPort:** The SMTP server port (default is 587 for TLS).
+  
+- **SMTPUsername:** The username for authenticating with the SMTP server.
+  
+- **SMTPPassword:** The password for authenticating with the SMTP server.
+  
+- **CustomEmailBody:** Custom email body for the CSR email. Default is "Please find the attached CSR file for $ServerName."
+
+**Example:**
+```
+GenerateCSRAndEmail.ps1 -ServerName "example.com" -CommonName "example.com" -Organization "Example Inc" -Department "IT" -Country "US" -State "CA" -City "Los Angeles" -AdminEmail "admin@example.com" -SMTPServer "smtp.example.com" -SMTPPort 587 -SMTPUsername "smtpuser" -SMTPPassword "password"
+```
+
+**Notes:**
+
+- Author: OpenAI ChatGPT
+- Date: April 2024
+
+---
+
+To use the script, follow these steps:
+
+1. Open PowerShell.
+
+2. Navigate to the directory where the script is located, or provide the full path to the script.
+
+3. Run the script with appropriate parameters as shown in the example above. Ensure you replace the example values with your actual server details and SMTP server credentials.
+
+4. The script will generate a CSR for the specified server, email it to the provided admin email address, and log any errors encountered during the process.
+
+5. Check the email inbox specified by the AdminEmail parameter for the CSR file attachment.
+
+6. If any errors occur during the execution of the script, a log file will be created in the system's temporary directory containing error details.
+
+7. For additional help or troubleshooting, refer to the script's documentation or contact the script author.
+
+This script is designed to simplify the process of generating CSRs for Windows servers and emailing them to administrators securely.
