@@ -1,0 +1,143 @@
+# ---------------------- [ SET WORKING VARIABLES ] ----------------------
+
+$applicationName = "YourApp"
+$executablePath = "C:\Path\To\YourApp.exe"
+$applicationArguments = "/config:C:\Secure\temp_config.xml"
+$xmlPath = "C:\applicationshare\config.xml"
+$xmlSecurePath = "C:\Secure\temp_config.xml"
+$logDir = "C:\Secure"
+$logFilePath = "$logDir\RetrieveCredentials_Log.txt"
+$logArchiveDir = "$logDir\ArchivedLogs"
+
+# ---------------------- [ LOG MANAGEMENT FUNCTION ] ----------------------
+
+# Function to manage log files (prevents indefinite log growth)
+function Manage-Logs {
+    # Ensure log directory exists
+    if (-not (Test-Path $logDir)) {
+        New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+    }
+
+    # Ensure log archive directory exists
+    if (-not (Test-Path $logArchiveDir)) {
+        New-Item -Path $logArchiveDir -ItemType Directory -Force | Out-Null
+    }
+
+    # Check log file size (5MB limit)
+    if (Test-Path $logFilePath) {
+        $logSizeMB = (Get-Item $logFilePath).Length / 1MB
+        if ($logSizeMB -gt 5) {
+            $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+            $archivedLog = "$logArchiveDir\RetrieveCredentials_Log_$timestamp.txt"
+            Move-Item -Path $logFilePath -Destination $archivedLog -Force
+        }
+    }
+
+    # Delete log files older than 30 days
+    Get-ChildItem -Path $logArchiveDir -Filter "*.txt" | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } | Remove-Item -Force
+}
+
+# ---------------------- [ LOGGING FUNCTION ] ----------------------
+
+# Function to log errors and events
+function Log-Error {
+    param ([string]$Message)
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$Timestamp - $Message" | Out-File -Append -FilePath $logFilePath
+}
+
+# Run log management function before logging new entries
+Manage-Logs
+
+# ---------------------- [ RETRIEVE CREDENTIALS FROM WINDOWS CREDENTIAL MANAGER ] ----------------------
+
+# Attempt to retrieve stored credentials
+$Cred = Get-StoredCredential -Target $applicationName
+
+# Validate that credentials were retrieved successfully
+if ($Cred -eq $null) {
+    $errorMsg = "No credentials found for '$applicationName'. Ensure credentials are saved before running this script."
+    Log-Error $errorMsg
+    Write-Host "Error: $errorMsg"
+    exit 1
+}
+
+$PlainPassword = $Cred.Password
+Log-Error "Credentials successfully retrieved for '$applicationName'."
+
+# ---------------------- [ INJECT PASSWORD INTO XML FILE ] ----------------------
+
+# Ensure the XML file exists before modifying it
+if (-not (Test-Path $xmlPath)) {
+    $errorMsg = "The XML configuration file '$xmlPath' does not exist. Check the file path."
+    Log-Error $errorMsg
+    Write-Host "Error: $errorMsg"
+    exit 1
+}
+
+# Load the XML configuration file
+try {
+    [xml]$xmlConfig = Get-Content $xmlPath
+    Log-Error "XML configuration file loaded successfully."
+} catch {
+    $errorMsg = "Unable to read XML configuration file. $_"
+    Log-Error $errorMsg
+    Write-Host "Error: $errorMsg"
+    exit 1
+}
+
+# Validate XML structure
+if ($xmlConfig.Configuration -eq $null -or $xmlConfig.Configuration.Password -eq $null) {
+    $errorMsg = "XML structure is invalid or missing a 'Password' field."
+    Log-Error $errorMsg
+    Write-Host "Error: $errorMsg"
+    exit 1
+}
+
+# Inject the retrieved password into the XML file
+$xmlConfig.Configuration.Password = $PlainPassword
+Log-Error "Password successfully injected into XML configuration."
+
+# Save the updated XML file securely
+try {
+    $xmlConfig.Save($xmlSecurePath)
+    Log-Error "Updated XML configuration saved securely to '$xmlSecurePath'."
+} catch {
+    $errorMsg = "Unable to save the updated XML file. $_"
+    Log-Error $errorMsg
+    Write-Host "Error: $errorMsg"
+    exit 1
+}
+
+# ---------------------- [ EXECUTE APPLICATION ] ----------------------
+
+# Ensure the executable exists before running it
+if (-not (Test-Path $executablePath)) {
+    $errorMsg = "The executable '$executablePath' does not exist. Check the file path."
+    Log-Error $errorMsg
+    Write-Host "Error: $errorMsg"
+    exit 1
+}
+
+# Run the application with the modified configuration file
+try {
+    Start-Process -FilePath $executablePath -ArgumentList $applicationArguments -Wait
+    Log-Error "Application executed successfully: $executablePath with arguments '$applicationArguments'."
+} catch {
+    $errorMsg = "Failed to execute application. $_"
+    Log-Error $errorMsg
+    Write-Host "Error: $errorMsg"
+    exit 1
+}
+
+# ---------------------- [ CLEANUP SENSITIVE FILES ] ----------------------
+
+# Remove the temporary secure XML file after execution to prevent credential exposure
+try {
+    Remove-Item $xmlSecurePath -Force -ErrorAction Stop
+    Log-Error "Secure XML file '$xmlSecurePath' successfully deleted after execution."
+} catch {
+    $warningMsg = "Unable to delete the secure XML file '$xmlSecurePath'. Please remove it manually to ensure security."
+    Log-Error $warningMsg
+    Write-Host "Warning: $warningMsg"
+}
