@@ -1,0 +1,135 @@
+<#
+SafeRobocopy.ps1
+-----------------
+# Author: vex-milk
+# Date: 2025-05-15
+# Version: 1.7
+# A robust, interactive PowerShell script for safely copying files from a Windows Server 2012 R2 (source) to a newer Windows server (destination) using robocopy.
+# Notes for Future Reviewers
+- This script is intended for safe, one-way data migration from an older Windows server to a newer one.
+- It is interactive and will not proceed without explicit user confirmation.
+- It does NOT delete any files at the destination.
+- All actions are logged for audit and troubleshooting.
+- For questions or improvements, contact your IT team.
+------------------
+- Designed to be run from the source server as the lowest version of Windows for maximum compatibility.
+- Prompts for all required information (source, destination, credentials).
+- Scans and summarizes both directories before copying.
+- Warns about potential data loss (overwrites, non-empty destination).
+- Requires explicit user confirmation before proceeding.
+- Logs all actions and errors for future review.
+- Does **not** delete any files at the destination.
+- Suitable for other admins or future use.
+
+# Usage
+1. Copy this script to the source server (2012 R2).
+2. Open PowerShell as Administrator.
+3. Run: `./SafeRobocopy.ps1`
+4. Follow the prompts.
+
+#>
+# =====================
+# Configurable Variables
+# =====================
+# Set these variables as needed before running the script.
+
+# Default log file path (change as needed)
+$logPath = "C:\robocopy_log.txt"
+
+# Option to disconnect mapped network drive after copy (if credentials were used)
+$disconnectMappedDrive = $true  # Set to $false to keep the mapped drive after the script completes
+
+# =====================
+
+# Prompt for source and destination
+$source = Read-Host "Enter the FULL LOCAL PATH to the source folder (e.g. D:\DataToCopy)"
+$destination = Read-Host "Enter the UNC path to the destination share (e.g. \\remote-server\BackupShare)"
+
+# =====================
+
+# Optional: Prompt for credentials for the destination share
+$useCreds = Read-Host "Do you need to provide network credentials for the destination? (y/n)"
+if ($useCreds -eq "y") {
+    $username = Read-Host "Enter username (DOMAIN\user or user@domain)"
+    $password = Read-Host "Enter password" -AsSecureString
+    $cred = New-Object System.Management.Automation.PSCredential($username, $password)
+    # Map the network drive temporarily
+    net use $destination /user:$username ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)))
+}
+
+Write-Host "`nScanning source and destination directories..."
+
+# Gather source info
+$srcFiles = Get-ChildItem -Path $source -Recurse -File -ErrorAction SilentlyContinue
+$srcDirs = Get-ChildItem -Path $source -Recurse -Directory -ErrorAction SilentlyContinue
+$srcFileNames = $srcFiles | Select-Object -ExpandProperty Name
+
+# Gather destination info
+$dstFiles = Get-ChildItem -Path $destination -Recurse -File -ErrorAction SilentlyContinue
+$dstDirs = Get-ChildItem -Path $destination -Recurse -Directory -ErrorAction SilentlyContinue
+$dstFileNames = $dstFiles | Select-Object -ExpandProperty Name
+
+# Check for files that exist in both (potential overwrite)
+$overlap = $srcFileNames | Where-Object { $dstFileNames -contains $_ }
+
+# Check if destination is not empty
+$dstNotEmpty = ($dstFiles.Count -gt 0 -or $dstDirs.Count -gt 0)
+
+# Compile warnings and summary
+Write-Host "`n==== PRE-COPY SUMMARY ===="
+Write-Host "Source: $source"
+Write-Host "  Files: $($srcFiles.Count)"
+Write-Host "  Folders: $($srcDirs.Count)"
+Write-Host "Destination: $destination"
+Write-Host "  Files: $($dstFiles.Count)"
+Write-Host "  Folders: $($dstDirs.Count)"
+if ($dstNotEmpty) {
+    Write-Host "WARNING: Destination is NOT empty!" -ForegroundColor Yellow
+}
+if ($overlap.Count -gt 0) {
+    Write-Host "WARNING: $($overlap.Count) files will be overwritten if copied:" -ForegroundColor Yellow
+    $overlap | Select-Object -First 10 | ForEach-Object { Write-Host "  $_" }
+    if ($overlap.Count -gt 10) { Write-Host "  ...and $($overlap.Count - 10) more." }
+} else {
+    Write-Host "No files in the source will overwrite files in the destination."
+}
+Write-Host "=========================="
+
+# Confirm with user
+$proceed = Read-Host "Review the above summary. Proceed with robocopy? (y/n)"
+if ($proceed -ne "y") {
+    Write-Host "Operation cancelled by user."
+    if ($useCreds -eq "y" -and $disconnectMappedDrive) { net use $destination /delete }
+    exit
+}
+
+# Robocopy command
+<#
+robocopy "$source" "$destination" /E /COPYALL /Z /SEC /LOG+:$logPath /TEE /R:5 /W:10 /V /NP /NFL /NDL
+
+Switch documentation:
+- /E      : Copy all subdirectories, including empty ones.
+- /COPYALL: Copy all file info (data, attributes, timestamps, security, owner, auditing).
+- /Z      : Use restartable mode (good for network interruptions).
+- /SEC    : Copy security (NTFS ACLs).
+- /LOG+   : Append output to the specified log file.
+- /TEE    : Output to both console and log file.
+- /R:5    : Retry 5 times on failed copies.
+- /W:10   : Wait 10 seconds between retries.
+- /V      : Verbose output (shows files as they are copied).
+- /NP     : No progress percentage (removes clutter).
+- /NFL    : No file list (removes listing of every file, but keeps summary and errors).
+- /NDL    : No directory list (removes listing of every directory).
+#>
+$robocopyCmd = "robocopy `"$source`" `"$destination`" /E /COPYALL /Z /SEC /LOG+:$logPath /TEE /R:5 /W:10 /V /NP /NFL /NDL"
+
+Write-Host "`nStarting robocopy..."
+Invoke-Expression $robocopyCmd
+
+Write-Host "`nRobocopy complete. Log file: $logPath"
+
+# Clean up mapped drive if used (optional, controlled by $disconnectMappedDrive)
+# If network credentials were used to map the destination share, this command disconnects the mapped network drive after the copy is complete.
+# This is important for security and to avoid leaving unnecessary network connections open. Set $disconnectMappedDrive = $false at the top to skip this step.
+if ($useCreds -eq "y" -and $disconnectMappedDrive) { net use $destination /delete }
+# - EOF
